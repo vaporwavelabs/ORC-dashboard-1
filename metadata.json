@@ -1,0 +1,5 @@
+{
+  "name": "AnythingLLM Dashboard",
+  "description": "A high-performance AI dashboard configured for AnythingLLM, featuring a central chat interface and hoverable system controls with a clean editorial design.",
+  "requestFramePermissions": []
+}
