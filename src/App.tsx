@@ -54,12 +54,29 @@ interface ChatSession {
   timestamp: number;
 }
 
+const modelList = {
+  local: [
+    { id: 'llama3', name: 'Llama 3 (8B)', params: '8B', type: 'Local', latency: '45ms', throughput: '12 t/s' },
+    { id: 'mistral', name: 'Mistral (7B)', params: '7B', type: 'Local', latency: '38ms', throughput: '15 t/s' },
+    { id: 'phi3', name: 'Phi-3 Mini', params: '3.8B', type: 'Local', latency: '22ms', throughput: '25 t/s' },
+  ],
+  cloud: [
+    { id: 'gemini-pro', name: 'Gemini 3.1 Pro', params: 'Multimodal', type: 'Cloud', latency: '120ms', throughput: '80 t/s' },
+    { id: 'gemini-flash', name: 'Gemini 3.1 Flash', params: 'Fast', type: 'Cloud', latency: '85ms', throughput: '120 t/s' },
+    { id: 'claude-sonnet', name: 'Claude 3.5 Sonnet', params: 'Reasoning', type: 'Cloud', latency: '150ms', throughput: '60 t/s' },
+    { id: 'gpt-4o', name: 'GPT-4o', params: 'Omni', type: 'Cloud', latency: '110ms', throughput: '90 t/s' },
+  ]
+};
+
 interface MemoryItem {
   id: string;
   name: string;
   type: string;
   size: string;
   timestamp: number;
+  status?: 'new' | 'embedding' | 'embedded';
+  category?: string;
+  metadata?: any;
 }
 
 interface Workspace {
@@ -175,7 +192,104 @@ const WaveChart = () => {
   );
 };
 
-const DockItem = ({ icon: Icon, label, onClick }: { icon: any, label: string, onClick?: () => void }) => {
+interface MemoryCardProps {
+  item: MemoryItem;
+  onRemove: () => void;
+  onMove: () => void;
+  moveLabel: string;
+}
+
+const MemoryCard: React.FC<MemoryCardProps> = ({ 
+  item, 
+  onRemove, 
+  onMove, 
+  moveLabel 
+}) => {
+  const [status, setStatus] = useState(item.status || 'new');
+  const isImage = item.type.startsWith('image/');
+  const isVideo = item.type.startsWith('video/');
+  const isAudio = item.type.startsWith('audio/');
+  const Icon = isImage ? ImageIcon : isVideo ? Video : isAudio ? Music : FileText;
+
+  const handleEmbed = () => {
+    setStatus('embedding');
+    setTimeout(() => setStatus('embedded'), 2000);
+  };
+
+  return (
+    <div className="group flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5 hover:border-brand-orange/30 transition-all">
+      <div className="p-3 bg-white dark:bg-slate-700 rounded-xl shadow-sm group-hover:text-brand-orange transition-colors relative">
+        <Icon className="w-5 h-5" />
+        {status === 'embedding' && (
+          <motion.div 
+            animate={{ rotate: 360 }}
+            transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+            className="absolute inset-0 border-2 border-brand-orange border-t-transparent rounded-xl"
+          />
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.name}</p>
+          {status === 'embedded' && (
+            <span className="text-[7px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 rounded-full font-bold uppercase tracking-tighter">Embedded</span>
+          )}
+          {item.category === 'Search Results' && (
+            <span className="text-[7px] px-1.5 py-0.5 bg-brand-orange/10 text-brand-orange rounded-full font-bold uppercase tracking-tighter">Search Result</span>
+          )}
+        </div>
+        
+        {item.category === 'Search Results' && item.metadata ? (
+          <div className="grid grid-cols-4 gap-2 mt-2 p-2 bg-slate-100 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-white/5">
+            {[
+              { label: 'Time', value: item.metadata.time },
+              { label: 'Pages', value: item.metadata.pages },
+              { label: 'Sites', value: item.metadata.sites },
+              { label: 'Data', value: item.metadata.data },
+            ].map((stat) => (
+              <div key={stat.label} className="text-center">
+                <p className="text-[6px] text-slate-500 uppercase font-bold tracking-tighter">{stat.label}</p>
+                <p className="text-[8px] font-mono text-brand-orange font-bold leading-none mt-0.5">{stat.value}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 mt-1">
+            <span className="text-[10px] text-slate-400 uppercase font-medium">{item.size}</span>
+            <span className="text-[10px] text-slate-400 uppercase font-medium">•</span>
+            <span className="text-[10px] text-slate-400 uppercase font-medium">{new Date(item.timestamp).toLocaleDateString()}</span>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        {status === 'new' && (
+          <button 
+            onClick={handleEmbed}
+            className="p-2 text-slate-400 hover:text-brand-orange transition-colors"
+            title="Embed Data"
+          >
+            <Zap className="w-4 h-4" />
+          </button>
+        )}
+        <button 
+          onClick={onMove}
+          className="p-2 text-slate-400 hover:text-brand-purple transition-colors"
+          title={`Move to ${moveLabel}`}
+        >
+          <ExternalLink className="w-4 h-4" />
+        </button>
+        <button 
+          onClick={onRemove}
+          className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const DockItem: React.FC<{ icon: any, label: string, onClick?: () => void }> = ({ icon: Icon, label, onClick }) => {
   return (
     <motion.button
       whileHover={{ y: -8, scale: 1.1 }}
@@ -205,6 +319,18 @@ export default function App() {
     target?: string;
     options?: string[];
   } | null>(null);
+  const [researchSearchQuery, setResearchSearchQuery] = useState('');
+  const [researchMode, setResearchMode] = useState<'live' | 'autonomous'>('live');
+  const [selectedProtocol, setSelectedProtocol] = useState<'wide' | 'deep' | 'secure'>('wide');
+  const [selectedEngine, setSelectedEngine] = useState<'google' | 'brave' | 'vivaldi' | 'tor'>('google');
+  const [researchStatus, setResearchStatus] = useState<'idle' | 'searching' | 'completed'>('idle');
+  const [lastResearchResult, setLastResearchResult] = useState<{
+    time: string;
+    pages: number;
+    sites: number;
+    data: string;
+    query: string;
+  } | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     { id: '1', role: 'assistant', content: 'Welcome to AnythingLLM. How can I assist you today?' }
   ]);
@@ -214,6 +340,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState('Gemini 3.1 Pro');
+  const [modelRole, setModelRole] = useState('Assistant');
   const [subAgents, setSubAgents] = useState<string[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([
     { 
@@ -242,7 +369,10 @@ export default function App() {
   const [workspaceNameInput, setWorkspaceNameInput] = useState('');
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [globalMemoryItems, setGlobalMemoryItems] = useState<MemoryItem[]>([]);
   const [isDockVisible, setIsDockVisible] = useState(false);
+  const [dockPage, setDockPage] = useState(0);
+
   const [memoryItems, setMemoryItems] = useState<MemoryItem[]>([]);
   const [selectedAgent, setSelectedAgent] = useState('Main Agent Orchestral');
   const [agentDeployments, setAgentDeployments] = useState<Record<string, 'local' | 'cloud'>>({
@@ -609,6 +739,38 @@ export default function App() {
     }
   };
 
+  const startResearch = () => {
+    if (!researchSearchQuery.trim()) return;
+    setResearchStatus('searching');
+    setLastResearchResult(null);
+    
+    // Simulate research process
+    setTimeout(() => {
+      const result = {
+        time: `${(Math.random() * 5 + 1).toFixed(1)}s`,
+        pages: Math.floor(Math.random() * 50 + 10),
+        sites: Math.floor(Math.random() * 10 + 3),
+        data: `${(Math.random() * 5 + 0.5).toFixed(2)} MB`,
+        query: researchSearchQuery
+      };
+      setLastResearchResult(result);
+      setResearchStatus('completed');
+      
+      // Save to memory
+      const memoryItem: MemoryItem = {
+        id: Math.random().toString(36).substr(2, 9),
+        name: `Search Result: ${researchSearchQuery}`,
+        type: 'application/json',
+        size: result.data,
+        timestamp: Date.now(),
+        status: 'new',
+        category: 'Search Results',
+        metadata: result
+      };
+      setMemoryItems(prev => [memoryItem, ...prev]);
+    }, 3000);
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -642,6 +804,27 @@ export default function App() {
     const nextIndex = (currentIndex + 1) % types.length;
     setBackground(types[nextIndex]);
   };
+
+  const dockItems = [
+    { icon: Database, label: "Memory", onClick: () => setActiveTab('memory') },
+    { icon: Cpu, label: "Model Config", onClick: () => setActiveTab('system') },
+    { icon: Shield, label: "Security", onClick: () => setActiveTab('security') },
+    { icon: Zap, label: "Performance", onClick: () => setActiveTab('system') },
+    { icon: Maximize2, label: "Context Window", onClick: () => setActiveTab('system') },
+    { icon: Zap, label: "New Chat", onClick: () => { setActiveTab('chat'); createNewSession(); } },
+    { icon: MessageSquare, label: "History", onClick: () => { setActiveTab('chat'); setChatSubView('sessions'); } },
+    { icon: FolderKanban, label: "Projects", onClick: () => setActiveTab('workspace') },
+    { icon: Search, label: "Research", onClick: () => setActiveTab('research') },
+    { icon: LayoutGrid, label: "Applications", onClick: () => setActiveTab('workspace') },
+    { icon: Wrench, label: "Skills", onClick: () => setActiveTab('tools') },
+    { icon: Bug, label: "Self Debug", onClick: () => setActiveTab('system') },
+    { icon: Palette, label: "Background", onClick: toggleBackground },
+    { icon: darkMode ? Sun : Moon, label: darkMode ? "Light Mode" : "Dark Mode", onClick: () => setDarkMode(!darkMode) },
+    { icon: Settings, label: "Settings", onClick: () => setActiveTab('system') },
+  ];
+
+  const ITEMS_PER_PAGE = 4;
+  const totalPages = Math.ceil(dockItems.length / ITEMS_PER_PAGE);
 
   return (
     <div className="relative min-h-screen w-full flex flex-col items-center p-[1.3rem] md:p-[2.6rem] overflow-hidden">
@@ -795,7 +978,7 @@ export default function App() {
               >
                 {chatSubView === 'chat' ? (
                   <>
-                    <div className="flex-1 overflow-y-auto p-[1.95rem] pb-24 space-y-4 scrollbar-hide relative z-10">
+                    <div className="h-[450px] w-[800px] overflow-y-auto p-[1.95rem] pb-24 space-y-4 scrollbar-hide relative z-10">
                     {messages.map((msg) => (
                       <motion.div
                         key={msg.id}
@@ -819,7 +1002,7 @@ export default function App() {
                               <Bot className="w-3 h-3 text-brand-purple" />
                             )}
                             <span className="text-[10px] font-bold uppercase tracking-wider opacity-70">
-                              {msg.role === 'user' ? 'Operator' : 'AnythingLLM'}
+                              {msg.role === 'user' ? 'Operator' : modelRole || 'AnythingLLM'}
                             </span>
                           </div>
                           <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
@@ -898,26 +1081,217 @@ export default function App() {
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className="flex-1 p-8 space-y-4 relative z-10"
+                className="flex-1 p-8 space-y-6 relative z-10 overflow-y-auto no-scrollbar"
               >
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Research Protocols</h3>
-                <div className="grid gap-3">
-                  {[
-                    { label: 'Wide Search', desc: 'Broad spectrum data gathering', icon: Search },
-                    { label: 'Deep Search', desc: 'Intensive neural pattern analysis', icon: Layers },
-                    { label: 'Secure Search', desc: 'Encrypted query execution', icon: Shield },
-                  ].map((opt) => (
-                    <button key={opt.label} className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5 hover:border-brand-orange/50 transition-all text-left group">
-                      <div className="p-2 bg-white dark:bg-slate-700 rounded-xl shadow-sm group-hover:text-brand-orange transition-colors">
-                        <opt.icon className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900 dark:text-white">{opt.label}</p>
-                        <p className="text-[10px] text-slate-400 uppercase tracking-wider">{opt.desc}</p>
-                      </div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Research Protocols</h3>
+                  <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-200 dark:border-white/5">
+                    <button 
+                      onClick={() => setResearchMode('live')}
+                      className={`px-3 py-1 text-[8px] font-bold uppercase rounded-md transition-all ${researchMode === 'live' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400'}`}
+                    >
+                      Live Browser
                     </button>
+                    <button 
+                      onClick={() => setResearchMode('autonomous')}
+                      className={`px-3 py-1 text-[8px] font-bold uppercase rounded-md transition-all ${researchMode === 'autonomous' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400'}`}
+                    >
+                      Autonomous Agent
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative group">
+                  <div className="absolute inset-0 bg-brand-orange/5 blur-xl group-focus-within:bg-brand-orange/10 transition-all rounded-2xl" />
+                  <div className="relative flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-2xl p-1 shadow-lg">
+                    <div className="pl-4 pr-2">
+                      <Search className="w-4 h-4 text-slate-400" />
+                    </div>
+                    <input 
+                      type="text"
+                      value={researchSearchQuery}
+                      onChange={(e) => setResearchSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && startResearch()}
+                      placeholder={researchMode === 'live' ? "Enter URL or Search Query..." : "Enter Target for Autonomous Research..."}
+                      className="flex-1 bg-transparent py-3 text-sm focus:outline-none dark:text-white"
+                    />
+                    <button 
+                      onClick={startResearch}
+                      disabled={researchStatus === 'searching'}
+                      className="px-6 py-2 bg-slate-900 dark:bg-brand-orange text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-brand-orange/80 transition-all disabled:opacity-50"
+                    >
+                      {researchStatus === 'searching' ? 'Researching...' : 'Initiate'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {[
+                    { id: 'wide', label: 'Wide Search', desc: 'Broad spectrum gathering', icon: Search },
+                    { id: 'deep', label: 'Deep Search', desc: 'Intensive pattern analysis', icon: Layers },
+                    { id: 'secure', label: 'Secure Search', desc: 'Encrypted query execution', icon: Shield },
+                  ].map((opt) => (
+                    <div key={opt.id} className="space-y-2">
+                      <button 
+                        onClick={() => setSelectedProtocol(opt.id as any)}
+                        className={`w-full flex items-center gap-3 p-4 rounded-2xl border transition-all text-left group ${
+                          selectedProtocol === opt.id 
+                            ? 'bg-brand-orange/5 border-brand-orange shadow-sm' 
+                            : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-white/5 hover:border-brand-orange/30'
+                        }`}
+                      >
+                        <div className={`p-2 rounded-xl shadow-sm transition-colors ${selectedProtocol === opt.id ? 'bg-brand-orange text-white' : 'bg-white dark:bg-slate-700 group-hover:text-brand-orange'}`}>
+                          <opt.icon className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className={`text-xs font-bold uppercase tracking-tight ${selectedProtocol === opt.id ? 'text-brand-orange' : 'text-slate-900 dark:text-white'}`}>{opt.label}</p>
+                          <p className="text-[8px] text-slate-400 uppercase tracking-wider">{opt.desc}</p>
+                        </div>
+                      </button>
+                      
+                      {selectedProtocol === opt.id && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-white/5"
+                        >
+                          {['google', 'brave', 'vivaldi', 'tor'].map((engine) => (
+                            <button
+                              key={engine}
+                              onClick={() => setSelectedEngine(engine as any)}
+                              className={`py-1.5 text-[8px] font-bold uppercase rounded-lg transition-all ${selectedEngine === engine ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                            >
+                              {engine}
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </div>
                   ))}
                 </div>
+
+                {/* Research Status / Results */}
+                <AnimatePresence mode="wait">
+                  {researchStatus === 'searching' ? (
+                    <motion.div 
+                      key="searching"
+                      initial={{ opacity: 0, scale: 0.98 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.98 }}
+                      className="p-8 bg-slate-900 rounded-[32px] border border-white/10 flex flex-col items-center justify-center space-y-6 relative overflow-hidden min-h-[300px]"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-b from-brand-orange/10 to-transparent opacity-20" />
+                      
+                      {researchMode === 'live' ? (
+                        <div className="w-full h-full flex flex-col items-center space-y-4">
+                          <div className="w-full flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-t-xl border-x border-t border-white/10">
+                            <div className="flex gap-1">
+                              <div className="w-1.5 h-1.5 rounded-full bg-red-500/50" />
+                              <div className="w-1.5 h-1.5 rounded-full bg-yellow-500/50" />
+                              <div className="w-1.5 h-1.5 rounded-full bg-green-500/50" />
+                            </div>
+                            <div className="flex-1 bg-slate-900 rounded px-2 py-0.5 text-[8px] text-slate-500 truncate">
+                              {selectedEngine}://secure.research.neural/{researchSearchQuery.replace(/\s+/g, '-').toLowerCase()}
+                            </div>
+                            <Shield className="w-2.5 h-2.5 text-emerald-500" />
+                          </div>
+                          <div className="flex-1 w-full bg-slate-950 rounded-b-xl border border-white/10 p-4 flex flex-col items-center justify-center space-y-4">
+                            <motion.div 
+                              animate={{ opacity: [0.3, 1, 0.3] }}
+                              transition={{ repeat: Infinity, duration: 2 }}
+                              className="text-center"
+                            >
+                              <Search className="w-8 h-8 text-brand-orange mx-auto mb-2" />
+                              <p className="text-[10px] font-bold text-white uppercase tracking-widest">Secure Live Session Active</p>
+                              <p className="text-[8px] text-slate-500 uppercase mt-1">Filtering traffic through {selectedProtocol} layers...</p>
+                            </motion.div>
+                            <div className="grid grid-cols-3 gap-2 w-full max-w-xs">
+                              {[1, 2, 3].map(i => (
+                                <motion.div 
+                                  key={i}
+                                  animate={{ height: [10, 30, 10] }}
+                                  transition={{ repeat: Infinity, duration: 1, delay: i * 0.2 }}
+                                  className="w-full bg-brand-orange/20 rounded-sm"
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="relative">
+                            <motion.div 
+                              animate={{ rotate: 360 }}
+                              transition={{ repeat: Infinity, duration: 4, ease: "linear" }}
+                              className="w-16 h-16 border-2 border-brand-orange/20 border-t-brand-orange rounded-full"
+                            />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <Bot className="w-6 h-6 text-brand-orange animate-pulse" />
+                            </div>
+                          </div>
+                          <div className="text-center space-y-2">
+                            <p className="text-sm font-bold text-white uppercase tracking-[0.2em]">Autonomous Agent Deployed</p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-widest">Gathering intelligence via {selectedEngine}...</p>
+                          </div>
+                          <div className="w-48 h-1 bg-slate-800 rounded-full overflow-hidden">
+                            <motion.div 
+                              animate={{ x: [-192, 192] }}
+                              transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+                              className="w-full h-full bg-brand-orange"
+                            />
+                          </div>
+                        </>
+                      )}
+                    </motion.div>
+                  ) : researchStatus === 'completed' && lastResearchResult ? (
+                    <motion.div 
+                      key="completed"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-6 bg-emerald-500/5 dark:bg-emerald-500/10 rounded-[32px] border border-emerald-500/20 space-y-6"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-emerald-500/20 rounded-xl">
+                            <Activity className="w-4 h-4 text-emerald-500" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-emerald-500 uppercase tracking-widest">Research Concluded</p>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Target: {lastResearchResult.query}</p>
+                          </div>
+                        </div>
+                        <div className="px-3 py-1 bg-emerald-500 text-white text-[8px] font-bold uppercase rounded-full tracking-widest">
+                          Success
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {[
+                          { label: 'Time', value: lastResearchResult.time },
+                          { label: 'Pages', value: lastResearchResult.pages },
+                          { label: 'Sites', value: lastResearchResult.sites },
+                          { label: 'Data', value: lastResearchResult.data },
+                        ].map((stat) => (
+                          <div key={stat.label} className="bg-white dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-white/5">
+                            <p className="text-[8px] text-slate-400 uppercase tracking-widest mb-1">{stat.label}</p>
+                            <p className="text-sm font-bold text-slate-900 dark:text-white">{stat.value}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2">
+                        <p className="text-[9px] text-slate-500 uppercase tracking-wider italic">Result saved to memory under search results.</p>
+                        <button 
+                          onClick={() => setActiveTab('memory')}
+                          className="flex items-center gap-2 text-[10px] font-bold text-brand-orange uppercase tracking-widest hover:underline"
+                        >
+                          View in Memory <ExternalLink className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
               </motion.div>
             ) : activeTab === 'security' ? (
               <motion.div 
@@ -1232,50 +1606,81 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Agent Selection */}
-                <div className="space-y-3">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Select Active Agent</p>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                    {['Main Agent Orchestral', 'Chat', 'Sub Agent', 'Embed Agent', 'Scout'].map((agent, index) => (
-                      <div 
-                        key={agent} 
-                        className={`flex flex-col gap-1 ${
-                          (index === 1 || index === 2) ? 'h-[68px] w-[300px]' : ''
-                        }`}
+                {/* Model Selection & Role */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Select LLM Engine</p>
+                    <div className="relative">
+                      <select 
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-slate-900 dark:text-white appearance-none focus:outline-none focus:ring-2 focus:ring-brand-orange/40"
                       >
-                        <button
-                          onClick={() => setSelectedAgent(agent)}
-                          className={`px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all border ${
-                            selectedAgent === agent 
-                              ? 'bg-brand-orange text-white border-brand-orange shadow-lg shadow-brand-orange/20' 
-                              : 'bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 border-slate-100 dark:border-white/5 hover:border-brand-orange/30'
-                          }`}
-                        >
-                          {agent}
-                        </button>
-                        <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-200 dark:border-white/5">
-                          <button 
-                            onClick={() => setAgentDeployments(prev => ({ ...prev, [agent]: 'local' }))}
-                            className={`flex-1 py-1 text-[7px] font-bold uppercase rounded-md transition-all ${agentDeployments[agent] === 'local' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400'}`}
-                          >
-                            Local
-                          </button>
-                          <button 
-                            onClick={() => setAgentDeployments(prev => ({ ...prev, [agent]: 'cloud' }))}
-                            className={`flex-1 py-1 text-[7px] font-bold uppercase rounded-md transition-all ${agentDeployments[agent] === 'cloud' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400'}`}
-                          >
-                            Cloud
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                        <optgroup label="Local Models" className="bg-white dark:bg-slate-900">
+                          {modelList.local.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                        </optgroup>
+                        <optgroup label="Cloud Models" className="bg-white dark:bg-slate-900">
+                          {modelList.cloud.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                        </optgroup>
+                      </select>
+                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Assign Model Role</p>
+                    <div className="relative">
+                      <input 
+                        type="text"
+                        value={modelRole}
+                        onChange={(e) => setModelRole(e.target.value)}
+                        placeholder="e.g. Creative Assistant"
+                        className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-orange/40"
+                      />
+                      <User className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
                   </div>
                 </div>
 
-                {/* Configuration Sliders */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-4 p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Parameters</p>
+                {/* Model Metrics & Parameters */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Metrics Card */}
+                  <div className="md:col-span-1 p-5 bg-slate-900 dark:bg-brand-orange/10 rounded-2xl border border-white/5 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <Activity className="w-4 h-4 text-brand-orange" />
+                        <p className="text-[10px] font-bold text-white uppercase tracking-widest">Live Metrics</p>
+                      </div>
+                      {(() => {
+                        const model = [...modelList.local, ...modelList.cloud].find(m => m.name === selectedModel);
+                        return model ? (
+                          <div className="space-y-4">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">Latency</span>
+                              <span className="text-xs font-mono text-white">{model.latency}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">Throughput</span>
+                              <span className="text-xs font-mono text-white">{model.throughput}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">Type</span>
+                              <span className={`px-2 py-0.5 rounded text-[7px] font-bold uppercase ${model.type === 'Local' ? 'bg-blue-500/20 text-blue-400' : 'bg-brand-orange/20 text-brand-orange'}`}>
+                                {model.type}
+                              </span>
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
+                    </div>
+                    <div className="mt-6 pt-4 border-t border-white/5">
+                       <p className="text-[8px] font-bold text-slate-500 uppercase tracking-tighter">Status: Optimized</p>
+                    </div>
+                  </div>
+
+                  {/* Parameters Card */}
+                  <div className="md:col-span-2 p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5 space-y-4">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Engine Parameters</p>
                     
                     <div className="space-y-2">
                       <div className="flex justify-between">
@@ -1289,112 +1694,67 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <label className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Temperature</label>
-                        <span className="text-[10px] font-mono text-brand-orange">{temperature.toFixed(1)}</span>
-                      </div>
-                      <input 
-                        type="range" min="0" max="2" step="0.1" 
-                        value={temperature} onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                        className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-orange"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <label className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Top P</label>
-                        <span className="text-[10px] font-mono text-brand-orange">{topP.toFixed(2)}</span>
-                      </div>
-                      <input 
-                        type="range" min="0" max="1" step="0.05" 
-                        value={topP} onChange={(e) => setTopP(parseFloat(e.target.value))}
-                        className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-orange"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Agent Stats */}
-                  <div className="space-y-4 p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Performance Metrics: {selectedAgent}</p>
-                    <div className="space-y-4">
-                      {[
-                        { task: 'Reasoning', score: AGENT_STATS_DATA[selectedAgent]?.reasoning || 0 },
-                        { task: 'Coding', score: AGENT_STATS_DATA[selectedAgent]?.coding || 0 },
-                        { task: 'Creative', score: AGENT_STATS_DATA[selectedAgent]?.creative || 0 },
-                        { task: 'Speed', score: AGENT_STATS_DATA[selectedAgent]?.speed || 0 },
-                      ].map((stat) => (
-                        <div key={stat.task} className="space-y-1.5">
-                          <div className="flex justify-between text-[9px] font-bold uppercase tracking-wider">
-                            <span className="text-slate-500">{stat.task}</span>
-                            <span className="text-slate-900 dark:text-white">{stat.score}%</span>
-                          </div>
-                          <div className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                            <motion.div 
-                              key={`${selectedAgent}-${stat.task}`}
-                              initial={{ width: 0 }}
-                              animate={{ width: `${stat.score}%` }}
-                              className="h-full bg-brand-orange"
-                            />
-                          </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <label className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Temperature</label>
+                          <span className="text-[10px] font-mono text-brand-orange">{temperature.toFixed(1)}</span>
                         </div>
-                      ))}
+                        <input 
+                          type="range" min="0" max="2" step="0.1" 
+                          value={temperature} onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                          className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-orange"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <label className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Top P</label>
+                          <span className="text-[10px] font-mono text-brand-orange">{topP.toFixed(2)}</span>
+                        </div>
+                        <input 
+                          type="range" min="0" max="1" step="0.05" 
+                          value={topP} onChange={(e) => setTopP(parseFloat(e.target.value))}
+                          className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-orange"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Agent Specialization</p>
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-brand-orange/10 rounded-lg">
-                        {agentDeployments[selectedAgent] === 'local' ? <Cpu className="w-3 h-3 text-brand-orange" /> : <Cloud className="w-3 h-3 text-brand-orange" />}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-[10px] font-bold text-slate-900 dark:text-white uppercase">{selectedAgent}</p>
-                          <span className={`text-[7px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${agentDeployments[selectedAgent] === 'local' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-blue-500/10 text-blue-500'}`}>
-                            {agentDeployments[selectedAgent]}
-                          </span>
-                        </div>
-                        <p className="text-[8px] text-slate-500 uppercase">{AGENT_STATS_DATA[selectedAgent]?.specialization}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Best for Task (Leaderboard)</p>
-                    <div className="space-y-2">
-                      {TASK_LEADERBOARD.slice(0, 3).map((item) => (
-                        <div key={item.task} className="flex justify-between items-center">
-                          <span className="text-[9px] text-slate-500 uppercase font-medium">{item.task}</span>
-                          <span className="text-[9px] font-bold text-brand-orange uppercase">{item.best}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                {/* Advanced Config Toggle */}
+                <button className="w-full py-3 border border-dashed border-slate-200 dark:border-white/10 rounded-xl text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:bg-slate-50 dark:hover:bg-white/5 transition-all">
+                  Advanced Engine Settings
+                </button>
               </motion.div>
-            ) : (
+            ) : activeTab === 'memory' ? (
               <motion.div 
                 key="memory"
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className="flex-1 p-8 relative z-10 flex flex-col"
+                className="flex-1 p-8 relative z-10 flex flex-col overflow-hidden"
               >
                 <div className="flex justify-between items-center mb-6">
                   <div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Vector Database</h3>
-                    <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider">Memory management protocols active</p>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Neural Memory Bank</h3>
+                    <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider">Vector Database & Embedding Engine Active</p>
                   </div>
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-2 px-4 py-2 bg-brand-orange text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-orange/90 transition-all shadow-lg shadow-brand-orange/20"
-                  >
-                    <Upload className="w-3 h-3" />
-                    Upload Media
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                    >
+                      <Upload className="w-3 h-3" />
+                      Upload
+                    </button>
+                    <button 
+                      className="flex items-center gap-2 px-4 py-2 bg-brand-orange text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-orange/90 transition-all shadow-lg shadow-brand-orange/20"
+                    >
+                      <Zap className="w-3 h-3" />
+                      Embed All
+                    </button>
+                  </div>
                   <input 
                     type="file" 
                     ref={fileInputRef} 
@@ -1404,45 +1764,67 @@ export default function App() {
                   />
                 </div>
 
-                <div className="flex-1 overflow-y-auto pr-2 space-y-3 no-scrollbar">
-                  {memoryItems.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-40">
-                      <Database className="w-12 h-12 text-slate-400" />
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">No data stored in memory</p>
+                <div className="flex-1 flex flex-col min-h-0 space-y-6">
+                  {/* Workspace Memory */}
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <div className="flex items-center gap-2 mb-3">
+                      <FolderKanban className="w-3 h-3 text-brand-orange" />
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Workspace Memory ({activeWorkspace.name})</span>
                     </div>
-                  ) : (
-                    memoryItems.map((item) => {
-                      const isImage = item.type.startsWith('image/');
-                      const isVideo = item.type.startsWith('video/');
-                      const isAudio = item.type.startsWith('audio/');
-                      const Icon = isImage ? ImageIcon : isVideo ? Video : isAudio ? Music : FileText;
-                      
-                      return (
-                        <div key={item.id} className="group flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5 hover:border-brand-orange/30 transition-all">
-                          <div className="p-3 bg-white dark:bg-slate-700 rounded-xl shadow-sm group-hover:text-brand-orange transition-colors">
-                            <Icon className="w-5 h-5" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.name}</p>
-                            <div className="flex items-center gap-3 mt-1">
-                              <span className="text-[10px] text-slate-400 uppercase font-medium">{item.size}</span>
-                              <span className="text-[10px] text-slate-400 uppercase font-medium">•</span>
-                              <span className="text-[10px] text-slate-400 uppercase font-medium">{new Date(item.timestamp).toLocaleDateString()}</span>
-                            </div>
-                          </div>
-                          <button 
-                            onClick={() => removeMemoryItem(item.id)}
-                            className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 no-scrollbar">
+                      {memoryItems.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-32 text-center space-y-2 opacity-30 border-2 border-dashed border-slate-200 dark:border-white/5 rounded-2xl">
+                          <Database className="w-6 h-6" />
+                          <p className="text-[9px] font-bold uppercase tracking-widest">No workspace data</p>
                         </div>
-                      );
-                    })
-                  )}
+                      ) : (
+                        memoryItems.map((item) => (
+                          <MemoryCard 
+                            key={item.id} 
+                            item={item} 
+                            onRemove={() => removeMemoryItem(item.id)} 
+                            onMove={() => {
+                              setGlobalMemoryItems(prev => [item, ...prev]);
+                              removeMemoryItem(item.id);
+                            }}
+                            moveLabel="Global"
+                          />
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Global Memory */}
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Cloud className="w-3 h-3 text-brand-purple" />
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Main Neural Memory (Global)</span>
+                    </div>
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 no-scrollbar">
+                      {globalMemoryItems.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-32 text-center space-y-2 opacity-30 border-2 border-dashed border-slate-200 dark:border-white/5 rounded-2xl">
+                          <Layers className="w-6 h-6" />
+                          <p className="text-[9px] font-bold uppercase tracking-widest">No global data</p>
+                        </div>
+                      ) : (
+                        globalMemoryItems.map((item) => (
+                          <MemoryCard 
+                            key={item.id} 
+                            item={item} 
+                            onRemove={() => setGlobalMemoryItems(prev => prev.filter(i => i.id !== item.id))} 
+                            onMove={() => {
+                              setMemoryItems(prev => [item, ...prev]);
+                              setGlobalMemoryItems(prev => prev.filter(i => i.id !== item.id));
+                            }}
+                            moveLabel="Workspace"
+                          />
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </motion.div>
-            )}
+            ) : null}
           </AnimatePresence>
 
           {/* Floating Chat Bar (Higher Position) */}
@@ -1472,7 +1854,7 @@ export default function App() {
 
       {/* Bottom Dock Trigger Area */}
       <div 
-        className="fixed bottom-0 left-0 right-0 h-24 z-20 flex items-end justify-center pb-8"
+        className="fixed bottom-0 left-0 right-0 h-[48px] z-20 flex items-end justify-center pb-8"
         onMouseEnter={() => setIsDockVisible(true)}
         onMouseLeave={() => setIsDockVisible(false)}
       >
@@ -1482,36 +1864,43 @@ export default function App() {
               initial={{ y: 100, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 100, opacity: 0 }}
-              className="max-w-[95vw] md:max-w-4xl overflow-hidden"
+              className="max-w-[95vw] md:max-w-4xl overflow-hidden flex flex-col items-center gap-4"
             >
-              <div className="flex gap-3 p-3 bg-black/40 backdrop-blur-2xl rounded-[32px] border border-white/10 shadow-2xl overflow-x-auto scrollbar-hide no-scrollbar">
-                <div className="flex gap-3 shrink-0">
-                  <DockItem icon={Database} label="Memory" onClick={() => setActiveTab('memory')} />
-                  <DockItem icon={Cpu} label="Model Config" onClick={() => setActiveTab('system')} />
-                  <DockItem icon={Shield} label="Security" onClick={() => setActiveTab('security')} />
-                  <DockItem icon={Zap} label="Performance" onClick={() => setActiveTab('system')} />
-                  <DockItem icon={Maximize2} label="Context Window" onClick={() => setActiveTab('system')} />
-                </div>
-                
-                <div className="w-px h-8 bg-white/10 self-center mx-1 shrink-0" />
-                
-                <div className="flex gap-3 shrink-0">
-                  <DockItem icon={Zap} label="New Chat" onClick={() => { setActiveTab('chat'); createNewSession(); }} />
-                  <DockItem icon={MessageSquare} label="History" onClick={() => { setActiveTab('chat'); setChatSubView('sessions'); }} />
-                  <DockItem icon={FolderKanban} label="Projects" onClick={() => setActiveTab('workspace')} />
-                  <DockItem icon={Search} label="Research" onClick={() => setActiveTab('research')} />
-                  <DockItem icon={LayoutGrid} label="Applications" onClick={() => setActiveTab('workspace')} />
-                  <DockItem icon={Wrench} label="Skills" onClick={() => setActiveTab('tools')} />
-                  <DockItem icon={Bug} label="Self Debug" onClick={() => setActiveTab('system')} />
-                </div>
-                
-                <div className="w-px h-8 bg-white/10 self-center mx-1 shrink-0" />
-                
-                <div className="flex gap-3 shrink-0">
-                  <DockItem icon={Palette} label="Background" onClick={toggleBackground} />
-                  <DockItem icon={darkMode ? Sun : Moon} label={darkMode ? "Light Mode" : "Dark Mode"} onClick={() => setDarkMode(!darkMode)} />
-                  <DockItem icon={Settings} label="Settings" onClick={() => setActiveTab('system')} />
-                </div>
+              <div className="flex items-center gap-3 p-3 bg-black/40 backdrop-blur-2xl rounded-[32px] border border-white/10 shadow-2xl relative min-w-[320px] justify-center">
+                <AnimatePresence mode="wait">
+                  <motion.div 
+                    key={dockPage}
+                    initial={{ x: 20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    exit={{ x: -20, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="flex gap-3 shrink-0"
+                  >
+                    {dockItems.slice(dockPage * ITEMS_PER_PAGE, (dockPage + 1) * ITEMS_PER_PAGE).map((item, idx) => (
+                      <DockItem 
+                        key={`${dockPage}-${idx}`}
+                        icon={item.icon} 
+                        label={item.label} 
+                        onClick={item.onClick} 
+                      />
+                    ))}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+
+              {/* Pagination Dots */}
+              <div className="flex gap-2 pb-2">
+                {Array.from({ length: totalPages }).map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setDockPage(i)}
+                    className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
+                      dockPage === i 
+                        ? "bg-brand-orange w-4" 
+                        : "bg-white/20 hover:bg-white/40"
+                    }`}
+                  />
+                ))}
               </div>
             </motion.div>
           )}
