@@ -23,7 +23,17 @@ import {
   Layers,
   ExternalLink,
   Search,
-  LayoutGrid
+  LayoutGrid,
+  Plus,
+  ChevronDown,
+  Trash2,
+  File,
+  Upload,
+  X,
+  FileText,
+  Video,
+  Music,
+  Cloud
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -44,10 +54,55 @@ interface ChatSession {
   timestamp: number;
 }
 
+interface MemoryItem {
+  id: string;
+  name: string;
+  type: string;
+  size: string;
+  timestamp: number;
+}
+
+interface Workspace {
+  id: string;
+  name: string;
+  sessionIds: string[];
+  activeTab?: 'chat' | 'system' | 'memory' | 'research' | 'security' | 'workspace' | 'tools';
+  securitySubView?: 'menu' | 'local-scan' | 'kali-terminal';
+  chatSubView?: 'chat' | 'sessions';
+  currentSessionId?: string;
+  selectedKaliTools?: string[];
+  kaliTarget?: string;
+  kaliManualCommand?: string;
+  memoryItems?: MemoryItem[];
+  selectedAgent?: string;
+  agentDeployments?: Record<string, 'local' | 'cloud'>;
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+}
+
 // --- AnythingLLM Configuration ---
 const ANYTHING_LLM_API_KEY = process.env.ANYTHING_LLM_API_KEY || '';
 const ANYTHING_LLM_BASE_URL = process.env.ANYTHING_LLM_BASE_URL || '';
 const ANYTHING_LLM_WORKSPACE_SLUG = process.env.ANYTHING_LLM_WORKSPACE_SLUG || '';
+
+// --- Constants ---
+
+const AGENT_STATS_DATA: Record<string, { reasoning: number, coding: number, creative: number, speed: number, specialization: string }> = {
+  'Main Agent Orchestral': { reasoning: 98, coding: 92, creative: 95, speed: 85, specialization: 'General Purpose / Complex Reasoning' },
+  'Chat': { reasoning: 85, coding: 70, creative: 98, speed: 95, specialization: 'Conversational / Creative Writing' },
+  'Sub Agent': { reasoning: 92, coding: 98, creative: 75, speed: 88, specialization: 'Technical Tasks / Debugging' },
+  'Embed Agent': { reasoning: 70, coding: 60, creative: 50, speed: 99, specialization: 'Vectorization / Data Retrieval' },
+  'Scout': { reasoning: 88, coding: 80, creative: 82, speed: 90, specialization: 'Web Research / Data Gathering' }
+};
+
+const TASK_LEADERBOARD = [
+  { task: 'Complex Reasoning', best: 'Main Agent Orchestral', score: 98 },
+  { task: 'Software Engineering', best: 'Sub Agent', score: 98 },
+  { task: 'Creative Writing', best: 'Chat', score: 98 },
+  { task: 'Data Vectorization', best: 'Embed Agent', score: 99 },
+  { task: 'Information Retrieval', best: 'Scout', score: 90 },
+];
 
 // --- Components ---
 
@@ -158,9 +213,50 @@ export default function App() {
   const [chatSubView, setChatSubView] = useState<'chat' | 'sessions'>('chat');
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('Gemini 3.1 Pro');
+  const [subAgents, setSubAgents] = useState<string[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([
+    { 
+      id: 'default', 
+      name: 'Main Workspace', 
+      sessionIds: [],
+      activeTab: 'chat',
+      securitySubView: 'menu',
+      chatSubView: 'chat',
+      memoryItems: [],
+      selectedAgent: 'Main Agent Orchestral',
+      agentDeployments: {
+        'Main Agent Orchestral': 'cloud',
+        'Chat': 'cloud',
+        'Sub Agent': 'local',
+        'Embed Agent': 'local',
+        'Scout': 'cloud'
+      },
+      maxTokens: 4096,
+      temperature: 0.7,
+      topP: 1.0
+    }
+  ]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState('default');
+  const [isEditingWorkspace, setIsEditingWorkspace] = useState(false);
+  const [workspaceNameInput, setWorkspaceNameInput] = useState('');
+  const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDockVisible, setIsDockVisible] = useState(false);
+  const [memoryItems, setMemoryItems] = useState<MemoryItem[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState('Main Agent Orchestral');
+  const [agentDeployments, setAgentDeployments] = useState<Record<string, 'local' | 'cloud'>>({
+    'Main Agent Orchestral': 'cloud',
+    'Chat': 'cloud',
+    'Sub Agent': 'local',
+    'Embed Agent': 'local',
+    'Scout': 'cloud'
+  });
+  const [maxTokens, setMaxTokens] = useState(4096);
+  const [temperature, setTemperature] = useState(0.7);
+  const [topP, setTopP] = useState(1.0);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -178,13 +274,119 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // --- Session Management ---
+  // --- Session & Workspace Management ---
   useEffect(() => {
     const savedSessions = localStorage.getItem('anything_llm_sessions');
     if (savedSessions) {
       setSessions(JSON.parse(savedSessions));
     }
+    const savedWorkspaces = localStorage.getItem('anything_llm_workspaces');
+    if (savedWorkspaces) {
+      const parsed = JSON.parse(savedWorkspaces);
+      setWorkspaces(parsed);
+      if (parsed.length > 0) {
+        const firstWorkspace = parsed[0];
+        setActiveWorkspaceId(firstWorkspace.id);
+        // Restore state from first workspace
+        if (firstWorkspace.activeTab) setActiveTab(firstWorkspace.activeTab);
+        if (firstWorkspace.securitySubView) setSecuritySubView(firstWorkspace.securitySubView);
+        if (firstWorkspace.chatSubView) setChatSubView(firstWorkspace.chatSubView);
+        if (firstWorkspace.memoryItems) setMemoryItems(firstWorkspace.memoryItems);
+        if (firstWorkspace.selectedAgent) setSelectedAgent(firstWorkspace.selectedAgent);
+        if (firstWorkspace.agentDeployments) setAgentDeployments(firstWorkspace.agentDeployments);
+        if (firstWorkspace.maxTokens) setMaxTokens(firstWorkspace.maxTokens);
+        if (firstWorkspace.temperature) setTemperature(firstWorkspace.temperature);
+        if (firstWorkspace.topP) setTopP(firstWorkspace.topP);
+      }
+    }
   }, []);
+
+  // Update current workspace state when view state changes
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    
+    setWorkspaces(prev => {
+      const current = prev.find(w => w.id === activeWorkspaceId);
+      if (!current) return prev;
+
+      // Only update if something actually changed to avoid unnecessary re-renders
+      if (
+        current.activeTab === activeTab &&
+        current.securitySubView === securitySubView &&
+        current.chatSubView === chatSubView &&
+        current.currentSessionId === currentSessionId &&
+        JSON.stringify(current.selectedKaliTools) === JSON.stringify(selectedKaliTools) &&
+        current.kaliTarget === kaliTarget &&
+        current.kaliManualCommand === kaliManualCommand &&
+        JSON.stringify(current.memoryItems) === JSON.stringify(memoryItems) &&
+        current.selectedAgent === selectedAgent &&
+        JSON.stringify(current.agentDeployments) === JSON.stringify(agentDeployments) &&
+        current.maxTokens === maxTokens &&
+        current.temperature === temperature &&
+        current.topP === topP
+      ) {
+        return prev;
+      }
+
+      return prev.map(w => 
+        w.id === activeWorkspaceId ? { 
+          ...w, 
+          activeTab, 
+          securitySubView, 
+          chatSubView,
+          currentSessionId,
+          selectedKaliTools,
+          kaliTarget,
+          kaliManualCommand,
+          memoryItems,
+          selectedAgent,
+          agentDeployments,
+          maxTokens,
+          temperature,
+          topP
+        } : w
+      );
+    });
+  }, [activeTab, securitySubView, chatSubView, activeWorkspaceId, currentSessionId, selectedKaliTools, kaliTarget, kaliManualCommand, memoryItems, selectedAgent, agentDeployments, maxTokens, temperature, topP]);
+
+  useEffect(() => {
+    localStorage.setItem('anything_llm_workspaces', JSON.stringify(workspaces));
+  }, [workspaces]);
+
+  // Switch session and view state when workspace changes
+  useEffect(() => {
+    const workspace = workspaces.find(w => w.id === activeWorkspaceId);
+    if (!workspace) return;
+
+    // Restore view state
+    if (workspace.activeTab) setActiveTab(workspace.activeTab);
+    if (workspace.securitySubView) setSecuritySubView(workspace.securitySubView);
+    if (workspace.chatSubView) setChatSubView(workspace.chatSubView);
+    if (workspace.selectedKaliTools) setSelectedKaliTools(workspace.selectedKaliTools);
+    if (workspace.kaliTarget) setKaliTarget(workspace.kaliTarget);
+    if (workspace.kaliManualCommand) setKaliManualCommand(workspace.kaliManualCommand);
+    if (workspace.memoryItems) setMemoryItems(workspace.memoryItems);
+    else setMemoryItems([]);
+
+    if (workspace.selectedAgent) setSelectedAgent(workspace.selectedAgent);
+    if (workspace.agentDeployments) setAgentDeployments(workspace.agentDeployments);
+    if (workspace.maxTokens) setMaxTokens(workspace.maxTokens);
+    if (workspace.temperature) setTemperature(workspace.temperature);
+    if (workspace.topP) setTopP(workspace.topP);
+
+    if (workspace.sessionIds.length > 0) {
+      const targetSessionId = workspace.currentSessionId || workspace.sessionIds[0];
+      if (targetSessionId !== currentSessionId) {
+        const session = sessions.find(s => s.id === targetSessionId);
+        if (session) {
+          setCurrentSessionId(session.id);
+          setMessages(session.messages);
+        } else {
+          createNewSession();
+        }
+      }
+    }
+  }, [activeWorkspaceId]);
 
   const saveCurrentSession = () => {
     setSessions(prev => {
@@ -234,6 +436,11 @@ export default function App() {
     setCurrentSessionId(newId);
     setMessages([{ id: '1', role: 'assistant', content: 'Welcome to AnythingLLM. How can I assist you today?' }]);
     setChatSubView('chat');
+    
+    // Link to workspace
+    setWorkspaces(prev => prev.map(w => 
+      w.id === activeWorkspaceId ? { ...w, sessionIds: [newId, ...w.sessionIds] } : w
+    ));
   };
 
   const deleteSession = (id: string) => {
@@ -245,6 +452,69 @@ export default function App() {
     if (currentSessionId === id) {
       createNewSession();
     }
+  };
+
+  const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || workspaces[0];
+
+  const updateWorkspaceName = () => {
+    if (!workspaceNameInput.trim()) {
+      setIsEditingWorkspace(false);
+      return;
+    }
+    setWorkspaces(prev => prev.map(w => 
+      w.id === activeWorkspaceId ? { ...w, name: workspaceNameInput.trim() } : w
+    ));
+    setIsEditingWorkspace(false);
+  };
+
+  const createNewWorkspace = () => {
+    const newId = Date.now().toString();
+    const newWorkspace: Workspace = {
+      id: newId,
+      name: `Workspace ${workspaces.length + 1}`,
+      sessionIds: [],
+      activeTab: 'chat',
+      securitySubView: 'menu',
+      chatSubView: 'chat',
+      selectedKaliTools: [],
+      kaliTarget: '',
+      kaliManualCommand: '',
+      memoryItems: [],
+      selectedAgent: 'Main Agent Orchestral',
+      agentDeployments: {
+        'Main Agent Orchestral': 'cloud',
+        'Chat': 'cloud',
+        'Sub Agent': 'local',
+        'Embed Agent': 'local',
+        'Scout': 'cloud'
+      },
+      maxTokens: 4096,
+      temperature: 0.7,
+      topP: 1.0
+    };
+    setWorkspaces(prev => [...prev, newWorkspace]);
+    setActiveWorkspaceId(newId);
+    createNewSession();
+    setShowWorkspaceMenu(false);
+  };
+
+  const deleteWorkspace = (id: string) => {
+    if (workspaces.length <= 1) return;
+    const workspaceToDelete = workspaces.find(w => w.id === id);
+    if (workspaceToDelete) {
+      // Remove associated sessions
+      setSessions(prev => {
+        const updated = prev.filter(s => !workspaceToDelete.sessionIds.includes(s.id));
+        localStorage.setItem('anything_llm_sessions', JSON.stringify(updated));
+        return updated;
+      });
+    }
+    setWorkspaces(prev => prev.filter(w => w.id !== id));
+    if (activeWorkspaceId === id) {
+      const remainingWorkspaces = workspaces.filter(w => w.id !== id);
+      setActiveWorkspaceId(remainingWorkspaces[0]?.id || 'default');
+    }
+    setShowWorkspaceMenu(false);
   };
 
   const handleSend = async () => {
@@ -339,6 +609,26 @@ export default function App() {
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const newItems: MemoryItem[] = Array.from(files).map((file: any) => ({
+      id: Math.random().toString(36).substr(2, 9),
+      name: file.name,
+      type: file.type,
+      size: (file.size / 1024).toFixed(1) + ' KB',
+      timestamp: Date.now()
+    }));
+
+    setMemoryItems(prev => [...newItems, ...prev]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeMemoryItem = (id: string) => {
+    setMemoryItems(prev => prev.filter(item => item.id !== id));
+  };
+
   const backgrounds: Record<BackgroundType, string> = {
     abstract: 'https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=2564&auto=format&fit=crop',
     dark: 'https://images.unsplash.com/photo-1519750783826-e2420f4d687f?q=80&w=2564&auto=format&fit=crop',
@@ -354,7 +644,51 @@ export default function App() {
   };
 
   return (
-    <div className="relative min-h-screen w-full flex items-center justify-center p-[1.3rem] md:p-[2.6rem] overflow-hidden">
+    <div className="relative min-h-screen w-full flex flex-col items-center p-[1.3rem] md:p-[2.6rem] overflow-hidden">
+      {/* Global Top Header */}
+      <div className="fixed top-0 left-0 right-0 z-50 px-6 h-[42px] bg-white/70 dark:bg-slate-900/70 backdrop-blur-md border-b border-slate-200 dark:border-white/10 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4 shrink-0">
+          <div className="flex flex-col">
+            <h2 className="text-[8px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] leading-none mb-1">Model</h2>
+            <div className="flex items-center gap-1.5 group cursor-pointer" onClick={() => {
+              const models = ['Gemini 3.1 Pro', 'Gemini 3.1 Flash', 'Claude 3.5 Sonnet', 'GPT-4o'];
+              const next = models[(models.indexOf(selectedModel) + 1) % models.length];
+              setSelectedModel(next);
+            }}>
+              <span className="text-xs font-bold tracking-tight text-slate-900 dark:text-white transition-colors group-hover:text-brand-orange whitespace-nowrap">{selectedModel}</span>
+              <ChevronDown className="w-2.5 h-2.5 text-slate-400 group-hover:text-brand-orange transition-colors" />
+            </div>
+          </div>
+        </div>
+
+        <div className="w-px h-6 bg-slate-200 dark:bg-white/10 shrink-0" />
+        
+        <div className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          <div className="flex gap-1.5">
+            {subAgents.map((agent, i) => (
+              <motion.div 
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                key={i} 
+                className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-white/5 flex items-center gap-1.5 shrink-0"
+              >
+                <div className="w-1 h-1 bg-brand-purple rounded-full" />
+                <span className="text-[8px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{agent}</span>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button onClick={toggleBackground} className="p-2 text-slate-400 hover:text-brand-orange transition-colors">
+            <Palette className="w-4 h-4" />
+          </button>
+          <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-slate-400 hover:text-brand-orange transition-colors">
+            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+
       {/* Background Layer */}
       <motion.div 
         key={background}
@@ -376,35 +710,69 @@ export default function App() {
         <motion.div 
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="relative z-10 w-full max-w-[540px] bg-white dark:bg-slate-900 rounded-[40px] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col h-[68vh] max-h-[640px] border border-transparent dark:border-white/5"
+          className="relative z-10 w-full max-w-[800px] bg-white dark:bg-slate-900 rounded-[40px] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col h-[85vh] max-h-[850px] border border-transparent dark:border-white/5 mt-12"
         >
-          {/* Header Section (Minimized) */}
-          <div className="p-[1.5rem] pb-[1rem] border-b border-slate-100 dark:border-white/5">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">System Load</h2>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold tracking-tighter text-slate-900 dark:text-white">98.2%</span>
-                  <span className="text-emerald-500 font-bold text-xs flex items-center">
-                    <motion.span 
-                      animate={{ y: [0, -2, 0] }} 
-                      transition={{ repeat: Infinity, duration: 2 }}
-                    >↑</motion.span> 2.5%
-                  </span>
+          {/* Browser-style Window Header */}
+          <div className="h-[40px] flex items-end gap-1 px-6 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-white/5 relative z-30">
+            <div className="flex-1 flex items-end gap-1 overflow-x-auto no-scrollbar">
+              {workspaces.map(w => (
+                <div key={w.id} className="group relative flex items-center">
+                  {isEditingWorkspace && activeWorkspaceId === w.id ? (
+                    <input
+                      autoFocus
+                      value={workspaceNameInput}
+                      onChange={(e) => setWorkspaceNameInput(e.target.value)}
+                      onBlur={updateWorkspaceName}
+                      onKeyDown={(e) => e.key === 'Enter' && updateWorkspaceName()}
+                      className="px-4 h-[33px] text-[8px] font-bold uppercase tracking-[0.2em] rounded-t-xl bg-white dark:bg-slate-900 text-brand-orange border-t border-x border-slate-100 dark:border-white/5 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.1)] outline-none w-32"
+                    />
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setActiveWorkspaceId(w.id)}
+                        className={`px-4 h-[33px] text-[8px] font-bold uppercase tracking-[0.2em] rounded-t-xl transition-all whitespace-nowrap pr-12 ${
+                          activeWorkspaceId === w.id 
+                            ? 'bg-white dark:bg-slate-900 text-brand-orange border-t border-x border-slate-100 dark:border-white/5 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.1)]' 
+                            : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                        }`}
+                      >
+                        {w.name}
+                      </button>
+                      {activeWorkspaceId === w.id && (
+                        <button 
+                          onClick={() => {
+                            setWorkspaceNameInput(w.name);
+                            setIsEditingWorkspace(true);
+                          }}
+                          className="absolute right-6 p-1 text-slate-300 hover:text-brand-orange opacity-0 group-hover:opacity-100 transition-all"
+                          title="Rename Workspace"
+                        >
+                          <Settings className="w-2 h-2" />
+                        </button>
+                      )}
+                      {workspaces.length > 1 && (
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteWorkspace(w.id);
+                          }}
+                          className="absolute right-2 p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                          title="Delete Workspace"
+                        >
+                          <Trash2 className="w-2 h-2" />
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors text-slate-400">
-                  <ExternalLink className="w-4 h-4" />
-                </button>
-                <button className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
-                  <div className="flex flex-col gap-0.5">
-                    <div className="w-1 h-1 bg-slate-300 dark:bg-slate-600 rounded-full" />
-                    <div className="w-1 h-1 bg-slate-300 dark:bg-slate-600 rounded-full" />
-                    <div className="w-1 h-1 bg-slate-300 dark:bg-slate-600 rounded-full" />
-                  </div>
-                </button>
-              </div>
+              ))}
+              <button 
+                onClick={createNewWorkspace}
+                className="p-2 text-slate-400 hover:text-brand-orange transition-colors mb-1"
+                title="New Workspace"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
             </div>
           </div>
 
@@ -425,41 +793,9 @@ export default function App() {
                 exit={{ opacity: 0, x: -10 }}
                 className="flex-1 flex flex-col min-h-0"
               >
-                <div className="flex items-center justify-between px-8 py-4 border-b border-slate-100 dark:border-white/5 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm z-20">
-                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                    {chatSubView === 'chat' ? 'Neural Conversation' : 'Previous Sessions'}
-                  </h3>
-                  <div className="flex gap-2">
-                    {chatSubView === 'chat' ? (
-                      <>
-                        <button 
-                          onClick={() => setChatSubView('sessions')}
-                          className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors text-slate-400"
-                          title="View History"
-                        >
-                          <Database className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={createNewSession}
-                          className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors text-brand-orange"
-                          title="New Chat"
-                        >
-                          <Zap className="w-4 h-4" />
-                        </button>
-                      </>
-                    ) : (
-                      <button 
-                        onClick={() => setChatSubView('chat')}
-                        className="text-[10px] font-bold text-brand-orange uppercase tracking-widest hover:underline"
-                      >
-                        Back to Chat
-                      </button>
-                    )}
-                  </div>
-                </div>
-
                 {chatSubView === 'chat' ? (
-                  <div className="flex-1 overflow-y-auto p-[1.95rem] pb-24 space-y-4 scrollbar-hide relative z-10">
+                  <>
+                    <div className="flex-1 overflow-y-auto p-[1.95rem] pb-24 space-y-4 scrollbar-hide relative z-10">
                     {messages.map((msg) => (
                       <motion.div
                         key={msg.id}
@@ -507,15 +843,29 @@ export default function App() {
                     )}
                     <div ref={chatEndRef} />
                   </div>
+                </>
                 ) : (
-                  <div className="flex-1 overflow-y-auto p-8 space-y-3 scrollbar-hide relative z-10">
-                    {sessions.length === 0 ? (
+                  <>
+                    <div className="px-8 py-4 border-b border-slate-100 dark:border-white/5 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm relative z-20 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Database className="w-4 h-4 text-slate-400" />
+                        <span className="text-[10px] font-bold text-slate-900 dark:text-white uppercase tracking-widest">Session History</span>
+                      </div>
+                      <button 
+                        onClick={() => setChatSubView('chat')}
+                        className="text-[10px] font-bold text-brand-orange uppercase tracking-widest hover:underline"
+                      >
+                        Back to Chat
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-8 space-y-3 scrollbar-hide relative z-10">
+                      {sessions.filter(s => activeWorkspace.sessionIds.includes(s.id)).length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-50">
                         <Database className="w-12 h-12" />
-                        <p className="text-xs font-bold uppercase tracking-widest">No saved sessions found</p>
+                        <p className="text-xs font-bold uppercase tracking-widest">No saved sessions in this workspace</p>
                       </div>
                     ) : (
-                      sessions.map((session) => (
+                      sessions.filter(s => activeWorkspace.sessionIds.includes(s.id)).map((session) => (
                         <div 
                           key={session.id}
                           className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5 hover:border-brand-orange/50 transition-all group"
@@ -533,12 +883,13 @@ export default function App() {
                             onClick={() => deleteSession(session.id)}
                             className="p-2 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
                           >
-                            <Bug className="w-4 h-4" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       ))
                     )}
                   </div>
+                </>
                 )}
               </motion.div>
             ) : activeTab === 'research' ? (
@@ -871,28 +1222,155 @@ export default function App() {
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className="flex-1 p-8 space-y-6 relative z-10"
+                className="flex-1 p-8 space-y-6 relative z-10 flex flex-col overflow-y-auto no-scrollbar"
               >
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">CPU Usage</p>
-                    <p className="text-xl font-bold text-slate-900 dark:text-white">12.4%</p>
-                  </div>
-                  <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">RAM Usage</p>
-                    <p className="text-xl font-bold text-slate-900 dark:text-white">2.8 GB</p>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Model Configuration</h3>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider">Engine Online</span>
                   </div>
                 </div>
-                <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Neural Engine Status</p>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-slate-600 dark:text-slate-400">API Connection</span>
-                      <span className="text-[10px] font-bold text-emerald-500 uppercase">Active</span>
+
+                {/* Agent Selection */}
+                <div className="space-y-3">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Select Active Agent</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {['Main Agent Orchestral', 'Chat', 'Sub Agent', 'Embed Agent', 'Scout'].map((agent, index) => (
+                      <div 
+                        key={agent} 
+                        className={`flex flex-col gap-1 ${
+                          (index === 1 || index === 2) ? 'h-[68px] w-[300px]' : ''
+                        }`}
+                      >
+                        <button
+                          onClick={() => setSelectedAgent(agent)}
+                          className={`px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all border ${
+                            selectedAgent === agent 
+                              ? 'bg-brand-orange text-white border-brand-orange shadow-lg shadow-brand-orange/20' 
+                              : 'bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 border-slate-100 dark:border-white/5 hover:border-brand-orange/30'
+                          }`}
+                        >
+                          {agent}
+                        </button>
+                        <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-200 dark:border-white/5">
+                          <button 
+                            onClick={() => setAgentDeployments(prev => ({ ...prev, [agent]: 'local' }))}
+                            className={`flex-1 py-1 text-[7px] font-bold uppercase rounded-md transition-all ${agentDeployments[agent] === 'local' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400'}`}
+                          >
+                            Local
+                          </button>
+                          <button 
+                            onClick={() => setAgentDeployments(prev => ({ ...prev, [agent]: 'cloud' }))}
+                            className={`flex-1 py-1 text-[7px] font-bold uppercase rounded-md transition-all ${agentDeployments[agent] === 'cloud' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400'}`}
+                          >
+                            Cloud
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Configuration Sliders */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4 p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Parameters</p>
+                    
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <label className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Max Tokens</label>
+                        <span className="text-[10px] font-mono text-brand-orange">{maxTokens}</span>
+                      </div>
+                      <input 
+                        type="range" min="256" max="8192" step="256" 
+                        value={maxTokens} onChange={(e) => setMaxTokens(parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-orange"
+                      />
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-slate-600 dark:text-slate-400">Workspace</span>
-                      <span className="text-[10px] font-bold text-slate-900 dark:text-white uppercase">{ANYTHING_LLM_WORKSPACE_SLUG || 'None'}</span>
+
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <label className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Temperature</label>
+                        <span className="text-[10px] font-mono text-brand-orange">{temperature.toFixed(1)}</span>
+                      </div>
+                      <input 
+                        type="range" min="0" max="2" step="0.1" 
+                        value={temperature} onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                        className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-orange"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <label className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Top P</label>
+                        <span className="text-[10px] font-mono text-brand-orange">{topP.toFixed(2)}</span>
+                      </div>
+                      <input 
+                        type="range" min="0" max="1" step="0.05" 
+                        value={topP} onChange={(e) => setTopP(parseFloat(e.target.value))}
+                        className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-orange"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Agent Stats */}
+                  <div className="space-y-4 p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Performance Metrics: {selectedAgent}</p>
+                    <div className="space-y-4">
+                      {[
+                        { task: 'Reasoning', score: AGENT_STATS_DATA[selectedAgent]?.reasoning || 0 },
+                        { task: 'Coding', score: AGENT_STATS_DATA[selectedAgent]?.coding || 0 },
+                        { task: 'Creative', score: AGENT_STATS_DATA[selectedAgent]?.creative || 0 },
+                        { task: 'Speed', score: AGENT_STATS_DATA[selectedAgent]?.speed || 0 },
+                      ].map((stat) => (
+                        <div key={stat.task} className="space-y-1.5">
+                          <div className="flex justify-between text-[9px] font-bold uppercase tracking-wider">
+                            <span className="text-slate-500">{stat.task}</span>
+                            <span className="text-slate-900 dark:text-white">{stat.score}%</span>
+                          </div>
+                          <div className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                            <motion.div 
+                              key={`${selectedAgent}-${stat.task}`}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${stat.score}%` }}
+                              className="h-full bg-brand-orange"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Agent Specialization</p>
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-brand-orange/10 rounded-lg">
+                        {agentDeployments[selectedAgent] === 'local' ? <Cpu className="w-3 h-3 text-brand-orange" /> : <Cloud className="w-3 h-3 text-brand-orange" />}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-[10px] font-bold text-slate-900 dark:text-white uppercase">{selectedAgent}</p>
+                          <span className={`text-[7px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter ${agentDeployments[selectedAgent] === 'local' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-blue-500/10 text-blue-500'}`}>
+                            {agentDeployments[selectedAgent]}
+                          </span>
+                        </div>
+                        <p className="text-[8px] text-slate-500 uppercase">{AGENT_STATS_DATA[selectedAgent]?.specialization}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Best for Task (Leaderboard)</p>
+                    <div className="space-y-2">
+                      {TASK_LEADERBOARD.slice(0, 3).map((item) => (
+                        <div key={item.task} className="flex justify-between items-center">
+                          <span className="text-[9px] text-slate-500 uppercase font-medium">{item.task}</span>
+                          <span className="text-[9px] font-bold text-brand-orange uppercase">{item.best}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -903,21 +1381,72 @@ export default function App() {
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className="flex-1 p-8 relative z-10"
+                className="flex-1 p-8 relative z-10 flex flex-col"
               >
-                <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
-                  <Database className="w-12 h-12 text-slate-200 dark:text-slate-700" />
+                <div className="flex justify-between items-center mb-6">
                   <div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">Vector Database</p>
-                    <p className="text-xs text-slate-400 mt-1">Memory management protocols active.</p>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Vector Database</h3>
+                    <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider">Memory management protocols active</p>
                   </div>
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-2 px-4 py-2 bg-brand-orange text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-orange/90 transition-all shadow-lg shadow-brand-orange/20"
+                  >
+                    <Upload className="w-3 h-3" />
+                    Upload Media
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleFileUpload} 
+                    multiple 
+                    className="hidden" 
+                  />
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-2 space-y-3 no-scrollbar">
+                  {memoryItems.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-40">
+                      <Database className="w-12 h-12 text-slate-400" />
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">No data stored in memory</p>
+                    </div>
+                  ) : (
+                    memoryItems.map((item) => {
+                      const isImage = item.type.startsWith('image/');
+                      const isVideo = item.type.startsWith('video/');
+                      const isAudio = item.type.startsWith('audio/');
+                      const Icon = isImage ? ImageIcon : isVideo ? Video : isAudio ? Music : FileText;
+                      
+                      return (
+                        <div key={item.id} className="group flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5 hover:border-brand-orange/30 transition-all">
+                          <div className="p-3 bg-white dark:bg-slate-700 rounded-xl shadow-sm group-hover:text-brand-orange transition-colors">
+                            <Icon className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.name}</p>
+                            <div className="flex items-center gap-3 mt-1">
+                              <span className="text-[10px] text-slate-400 uppercase font-medium">{item.size}</span>
+                              <span className="text-[10px] text-slate-400 uppercase font-medium">•</span>
+                              <span className="text-[10px] text-slate-400 uppercase font-medium">{new Date(item.timestamp).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => removeMemoryItem(item.id)}
+                            className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
 
-          {/* Floating Chat Bar (Lower Position) */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[90%] z-20">
+          {/* Floating Chat Bar (Higher Position) */}
+          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-[90%] z-20">
             <div className="relative flex items-center group">
               <div className="absolute inset-0 bg-white/40 dark:bg-black/20 backdrop-blur-md rounded-2xl -m-1 opacity-0 group-focus-within:opacity-100 transition-opacity" />
               <input
@@ -943,7 +1472,7 @@ export default function App() {
 
       {/* Bottom Dock Trigger Area */}
       <div 
-        className="fixed bottom-0 left-0 right-0 h-32 z-20 flex items-end justify-center pb-8"
+        className="fixed bottom-0 left-0 right-0 h-24 z-20 flex items-end justify-center pb-8"
         onMouseEnter={() => setIsDockVisible(true)}
         onMouseLeave={() => setIsDockVisible(false)}
       >
@@ -958,7 +1487,7 @@ export default function App() {
               <div className="flex gap-3 p-3 bg-black/40 backdrop-blur-2xl rounded-[32px] border border-white/10 shadow-2xl overflow-x-auto scrollbar-hide no-scrollbar">
                 <div className="flex gap-3 shrink-0">
                   <DockItem icon={Database} label="Memory" onClick={() => setActiveTab('memory')} />
-                  <DockItem icon={Cpu} label="Model" onClick={() => setActiveTab('system')} />
+                  <DockItem icon={Cpu} label="Model Config" onClick={() => setActiveTab('system')} />
                   <DockItem icon={Shield} label="Security" onClick={() => setActiveTab('security')} />
                   <DockItem icon={Zap} label="Performance" onClick={() => setActiveTab('system')} />
                   <DockItem icon={Maximize2} label="Context Window" onClick={() => setActiveTab('system')} />
@@ -967,7 +1496,8 @@ export default function App() {
                 <div className="w-px h-8 bg-white/10 self-center mx-1 shrink-0" />
                 
                 <div className="flex gap-3 shrink-0">
-                  <DockItem icon={MessageSquare} label="Previous Chats" onClick={() => { setActiveTab('chat'); setChatSubView('sessions'); }} />
+                  <DockItem icon={Zap} label="New Chat" onClick={() => { setActiveTab('chat'); createNewSession(); }} />
+                  <DockItem icon={MessageSquare} label="History" onClick={() => { setActiveTab('chat'); setChatSubView('sessions'); }} />
                   <DockItem icon={FolderKanban} label="Projects" onClick={() => setActiveTab('workspace')} />
                   <DockItem icon={Search} label="Research" onClick={() => setActiveTab('research')} />
                   <DockItem icon={LayoutGrid} label="Applications" onClick={() => setActiveTab('workspace')} />
