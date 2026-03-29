@@ -33,9 +33,12 @@ import {
   FileText,
   Video,
   Music,
-  Cloud
+  Cloud,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useDragControls } from 'motion/react';
+import { GoogleGenAI } from "@google/genai";
 
 // --- Types ---
 
@@ -89,6 +92,7 @@ interface Workspace {
   currentSessionId?: string;
   selectedKaliTools?: string[];
   kaliTarget?: string;
+  localScanTarget?: string;
   kaliManualCommand?: string;
   memoryItems?: MemoryItem[];
   selectedAgent?: string;
@@ -308,10 +312,11 @@ const DockItem: React.FC<{ icon: any, label: string, onClick?: () => void }> = (
 export default function App() {
   const [background, setBackground] = useState<BackgroundType>('abstract');
   const [darkMode, setDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<'chat' | 'system' | 'memory' | 'research' | 'security' | 'workspace' | 'tools'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'system' | 'memory' | 'research' | 'security' | 'tools'>('chat');
   const [securitySubView, setSecuritySubView] = useState<'menu' | 'local-scan' | 'kali-terminal'>('menu');
   const [selectedKaliTools, setSelectedKaliTools] = useState<string[]>([]);
   const [kaliTarget, setKaliTarget] = useState('');
+  const [localScanTarget, setLocalScanTarget] = useState('');
   const [kaliManualCommand, setKaliManualCommand] = useState('');
   const [pendingTask, setPendingTask] = useState<{
     type: 'scan' | 'kali';
@@ -339,6 +344,7 @@ export default function App() {
   const [chatSubView, setChatSubView] = useState<'chat' | 'sessions'>('chat');
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [selectedModel, setSelectedModel] = useState('Gemini 3.1 Pro');
   const [modelRole, setModelRole] = useState('Assistant');
   const [subAgents, setSubAgents] = useState<string[]>([]);
@@ -370,6 +376,10 @@ export default function App() {
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [globalMemoryItems, setGlobalMemoryItems] = useState<MemoryItem[]>([]);
+  const [isDetached, setIsDetached] = useState(false);
+  const [anchor, setAnchor] = useState<'none' | 'left' | 'right'>('none');
+  const [windowPosition, setWindowPosition] = useState({ x: 0, y: 0 });
+  const [windowSize, setWindowSize] = useState({ width: 800, height: 650 });
   const [isDockVisible, setIsDockVisible] = useState(false);
   const [dockPage, setDockPage] = useState(0);
 
@@ -385,6 +395,7 @@ export default function App() {
   const [maxTokens, setMaxTokens] = useState(4096);
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(1.0);
+  const dragControls = useDragControls();
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -397,6 +408,16 @@ export default function App() {
   }, [messages]);
 
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && anchor !== 'none') {
+        setAnchor('none');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [anchor]);
+
+  useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
     } else {
@@ -404,7 +425,7 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // --- Session & Workspace Management ---
+  // --- Session Management ---
   useEffect(() => {
     const savedSessions = localStorage.getItem('anything_llm_sessions');
     if (savedSessions) {
@@ -447,6 +468,7 @@ export default function App() {
         current.currentSessionId === currentSessionId &&
         JSON.stringify(current.selectedKaliTools) === JSON.stringify(selectedKaliTools) &&
         current.kaliTarget === kaliTarget &&
+        current.localScanTarget === localScanTarget &&
         current.kaliManualCommand === kaliManualCommand &&
         JSON.stringify(current.memoryItems) === JSON.stringify(memoryItems) &&
         current.selectedAgent === selectedAgent &&
@@ -467,6 +489,7 @@ export default function App() {
           currentSessionId,
           selectedKaliTools,
           kaliTarget,
+          localScanTarget,
           kaliManualCommand,
           memoryItems,
           selectedAgent,
@@ -494,6 +517,7 @@ export default function App() {
     if (workspace.chatSubView) setChatSubView(workspace.chatSubView);
     if (workspace.selectedKaliTools) setSelectedKaliTools(workspace.selectedKaliTools);
     if (workspace.kaliTarget) setKaliTarget(workspace.kaliTarget);
+    if (workspace.localScanTarget) setLocalScanTarget(workspace.localScanTarget);
     if (workspace.kaliManualCommand) setKaliManualCommand(workspace.kaliManualCommand);
     if (workspace.memoryItems) setMemoryItems(workspace.memoryItems);
     else setMemoryItems([]);
@@ -608,6 +632,7 @@ export default function App() {
       chatSubView: 'chat',
       selectedKaliTools: [],
       kaliTarget: '',
+      localScanTarget: '',
       kaliManualCommand: '',
       memoryItems: [],
       selectedAgent: 'Main Agent Orchestral',
@@ -652,6 +677,32 @@ export default function App() {
     
     const lowerInput = input.toLowerCase().trim();
     
+    // Detect Tab Switching Commands
+    const tabCommands: Record<string, typeof activeTab> = {
+      '/chat': 'chat',
+      '/system': 'system',
+      '/memory': 'memory',
+      '/research': 'research',
+      '/security': 'security',
+      '/workspace': 'workspace',
+      '/tools': 'tools',
+      'go to chat': 'chat',
+      'go to system': 'system',
+      'go to memory': 'memory',
+      'go to research': 'research',
+      'go to security': 'security',
+      'go to workspace': 'workspace',
+      'go to tools': 'tools'
+    };
+
+    const matchedTab = Object.entries(tabCommands).find(([cmd]) => lowerInput.startsWith(cmd));
+    if (matchedTab) {
+      setActiveTab(matchedTab[1]);
+      setInput('');
+      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: `🔄 Switching neural interface to ${matchedTab[1].toUpperCase()}...` }]);
+      return;
+    }
+    
     // Detect Security Commands
     const scanMatch = lowerInput.match(/^scan\s+(folder|app|code|system)$/);
     const kaliTools = ['nmap', 'spiderfoot', 'metasploit', 'burp', 'wireshark', 'john'];
@@ -676,48 +727,60 @@ export default function App() {
     setError(null);
     
     try {
-      if (!ANYTHING_LLM_API_KEY) {
-        throw new Error("API Key is missing. Please configure ANYTHING_LLM_API_KEY in your settings.");
-      }
-      if (!ANYTHING_LLM_BASE_URL) {
-        throw new Error("Base URL is missing. Please configure ANYTHING_LLM_BASE_URL.");
-      }
-      if (!ANYTHING_LLM_WORKSPACE_SLUG) {
-        throw new Error("Workspace Slug is missing. Please configure ANYTHING_LLM_WORKSPACE_SLUG.");
-      }
+      let botResponse = "";
 
-      const response = await fetch(`${ANYTHING_LLM_BASE_URL}/api/v1/workspace/${ANYTHING_LLM_WORKSPACE_SLUG}/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ANYTHING_LLM_API_KEY}`
-        },
-        body: JSON.stringify({
-          message: currentInput,
-          mode: 'chat'
-        })
-      });
+      if (ANYTHING_LLM_API_KEY && ANYTHING_LLM_BASE_URL && ANYTHING_LLM_WORKSPACE_SLUG) {
+        // Use AnythingLLM
+        const response = await fetch(`${ANYTHING_LLM_BASE_URL}/api/v1/workspace/${ANYTHING_LLM_WORKSPACE_SLUG}/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${ANYTHING_LLM_API_KEY}`
+          },
+          body: JSON.stringify({
+            message: currentInput,
+            mode: 'chat'
+          })
+        });
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error("Unauthorized: Your API key appears to be invalid or expired.");
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error("Unauthorized: Your API key appears to be invalid or expired.");
+          }
+          if (response.status === 404) {
+            throw new Error(`Workspace "${ANYTHING_LLM_WORKSPACE_SLUG}" not found. Please check the slug.`);
+          }
+          if (response.status === 500) {
+            throw new Error("Server Error: The AnythingLLM instance encountered an internal error.");
+          }
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Connection failed with status ${response.status}`);
         }
-        if (response.status === 404) {
-          throw new Error(`Workspace "${ANYTHING_LLM_WORKSPACE_SLUG}" not found. Please check the slug.`);
+
+        const data = await response.json();
+        botResponse = data.textResponse || "The neural engine returned an empty response.";
+      } else {
+        // Fallback to Gemini
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: currentInput,
+          config: {
+            systemInstruction: "You are the Neural Engine assistant. You are currently operating in Fallback Mode because AnythingLLM is not configured. Provide helpful, technical, and concise responses."
+          }
+        });
+        botResponse = response.text || "The neural engine returned an empty response.";
+        
+        // Add a system notice if this is the first fallback message
+        if (messages.length <= 2) {
+          botResponse = `[SYSTEM NOTICE: Operating in Gemini Fallback Mode. AnythingLLM API Key or Environment not configured in settings.]\n\n${botResponse}`;
         }
-        if (response.status === 500) {
-          throw new Error("Server Error: The AnythingLLM instance encountered an internal error.");
-        }
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Connection failed with status ${response.status}`);
       }
-
-      const data = await response.json();
       
       const botMsg: Message = { 
         id: (Date.now() + 1).toString(), 
         role: 'assistant', 
-        content: data.textResponse || "The neural engine returned an empty response." 
+        content: botResponse
       };
       setMessages(prev => [...prev, botMsg]);
     } catch (error: any) {
@@ -813,9 +876,7 @@ export default function App() {
     { icon: Maximize2, label: "Context Window", onClick: () => setActiveTab('system') },
     { icon: Zap, label: "New Chat", onClick: () => { setActiveTab('chat'); createNewSession(); } },
     { icon: MessageSquare, label: "History", onClick: () => { setActiveTab('chat'); setChatSubView('sessions'); } },
-    { icon: FolderKanban, label: "Projects", onClick: () => setActiveTab('workspace') },
     { icon: Search, label: "Research", onClick: () => setActiveTab('research') },
-    { icon: LayoutGrid, label: "Applications", onClick: () => setActiveTab('workspace') },
     { icon: Wrench, label: "Skills", onClick: () => setActiveTab('tools') },
     { icon: Bug, label: "Self Debug", onClick: () => setActiveTab('system') },
     { icon: Palette, label: "Background", onClick: toggleBackground },
@@ -862,13 +923,28 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button onClick={toggleBackground} className="p-2 text-slate-400 hover:text-brand-orange transition-colors">
-            <Palette className="w-4 h-4" />
-          </button>
-          <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-slate-400 hover:text-brand-orange transition-colors">
-            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </button>
+        <div className="flex items-center gap-6">
+          <div className="flex flex-col items-end">
+            <h2 className="text-[8px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] leading-none mb-1">Current Status</h2>
+            <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-100/50 dark:bg-white/5 rounded-full border border-slate-200/50 dark:border-white/5">
+              {isScanning ? (
+                <Loader2 className="w-2.5 h-2.5 text-blue-500 animate-spin" />
+              ) : (
+                <div className={`w-1.5 h-1.5 rounded-full ${
+                  researchStatus === 'searching' ? 'bg-purple-500 animate-pulse shadow-[0_0_12px_rgba(168,85,247,0.8)]' :
+                  isLoading ? 'bg-orange-500 animate-pulse shadow-[0_0_12px_rgba(249,115,22,0.8)]' :
+                  error ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 
+                  'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+                }`} />
+              )}
+              <span className="text-[10px] font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                {isScanning ? 'Scan' :
+                 researchStatus === 'searching' ? 'Search' :
+                 isLoading ? 'Task' :
+                 error ? 'Offline' : 'Idle'}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -889,72 +965,121 @@ export default function App() {
         <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px]" />
       </motion.div>
 
+      {/* Background Workspace (Correlated) */}
+      {isDetached && (
+        <div className="absolute inset-0 z-0 p-12 pointer-events-none mt-24 overflow-hidden">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="h-full w-full flex items-center justify-center"
+          >
+            <div className="text-center space-y-4 opacity-20">
+              <Bot className="w-24 h-24 text-white mx-auto animate-pulse" />
+              <p className="text-xl font-bold text-white uppercase tracking-[0.4em]">Neural Interface Active</p>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
         {/* Main Dashboard Card */}
         <motion.div 
+          drag={isDetached && anchor === 'none'}
+          dragControls={dragControls}
+          dragListener={false}
+          dragMomentum={false}
           initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="relative z-10 w-full max-w-[800px] bg-white dark:bg-slate-900 rounded-[40px] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col h-[85vh] max-h-[850px] border border-transparent dark:border-white/5 mt-12"
+          animate={{ 
+            y: 0, 
+            opacity: 1,
+            transition: { type: 'spring', damping: 20, stiffness: 100 }
+          }}
+          style={isDetached ? { 
+            position: 'fixed', 
+            width: windowSize.width, 
+            height: anchor !== 'none' ? '90vh' : windowSize.height,
+            zIndex: 100,
+            left: anchor === 'left' ? '20px' : anchor === 'right' ? 'auto' : '50%',
+            right: anchor === 'right' ? '20px' : 'auto',
+            top: anchor !== 'none' ? '5vh' : '50%',
+            transform: anchor === 'none' ? 'translate(-50%, -50%)' : 'none',
+          } : {}}
+          className={`relative z-10 bg-white dark:bg-slate-900 shadow-[0_32px_64px_-12px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col border border-transparent dark:border-white/5 ${
+            isDetached ? 'rounded-2xl' : 'w-full max-w-[800px] rounded-[40px] h-[85vh] max-h-[850px] mt-12'
+          }`}
         >
           {/* Browser-style Window Header */}
-          <div className="h-[40px] flex items-end gap-1 px-6 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-white/5 relative z-30">
-            <div className="flex-1 flex items-end gap-1 overflow-x-auto no-scrollbar">
-              {workspaces.map(w => (
-                <div key={w.id} className="group relative flex items-center">
-                  {isEditingWorkspace && activeWorkspaceId === w.id ? (
-                    <input
-                      autoFocus
-                      value={workspaceNameInput}
-                      onChange={(e) => setWorkspaceNameInput(e.target.value)}
-                      onBlur={updateWorkspaceName}
-                      onKeyDown={(e) => e.key === 'Enter' && updateWorkspaceName()}
-                      className="px-4 h-[33px] text-[8px] font-bold uppercase tracking-[0.2em] rounded-t-xl bg-white dark:bg-slate-900 text-brand-orange border-t border-x border-slate-100 dark:border-white/5 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.1)] outline-none w-32"
-                    />
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => setActiveWorkspaceId(w.id)}
-                        className={`px-4 h-[33px] text-[8px] font-bold uppercase tracking-[0.2em] rounded-t-xl transition-all whitespace-nowrap pr-12 ${
-                          activeWorkspaceId === w.id 
-                            ? 'bg-white dark:bg-slate-900 text-brand-orange border-t border-x border-slate-100 dark:border-white/5 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.1)]' 
-                            : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-                        }`}
-                      >
-                        {w.name}
-                      </button>
-                      {activeWorkspaceId === w.id && (
-                        <button 
-                          onClick={() => {
-                            setWorkspaceNameInput(w.name);
-                            setIsEditingWorkspace(true);
-                          }}
-                          className="absolute right-6 p-1 text-slate-300 hover:text-brand-orange opacity-0 group-hover:opacity-100 transition-all"
-                          title="Rename Workspace"
-                        >
-                          <Settings className="w-2 h-2" />
-                        </button>
-                      )}
-                      {workspaces.length > 1 && (
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteWorkspace(w.id);
-                          }}
-                          className="absolute right-2 p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                          title="Delete Workspace"
-                        >
-                          <Trash2 className="w-2 h-2" />
-                        </button>
-                      )}
-                    </>
-                  )}
+          <div 
+            onPointerDown={(e) => isDetached && anchor === 'none' && dragControls.start(e)}
+            className={`h-[40px] flex items-center justify-between px-6 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-white/5 relative z-30 ${isDetached && anchor === 'none' ? 'cursor-move' : ''}`}
+          >
+            <div className="flex items-center gap-2">
+              <div className="flex gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-400/20 dark:bg-red-400/10 border border-red-400/30" />
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-400/20 dark:bg-yellow-400/10 border border-yellow-400/30" />
+                <div className="w-2.5 h-2.5 rounded-full bg-green-400/20 dark:bg-green-400/10 border border-green-400/30" />
+              </div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] ml-2">Neural Workspace</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {isDetached && (
+                <div className="flex items-center bg-slate-100 dark:bg-white/5 rounded-lg p-0.5 border border-slate-200 dark:border-white/10">
+                  <button
+                    onClick={() => {
+                      if (anchor !== 'left') setWindowSize(prev => ({ ...prev, width: 400 }));
+                      setAnchor(anchor === 'left' ? 'none' : 'left');
+                    }}
+                    className={`p-1 rounded-md transition-all ${anchor === 'left' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                    title="Anchor Left"
+                    aria-label="Anchor Left"
+                  >
+                    <div className="w-3 h-3 border-l-2 border-current" />
+                  </button>
+                  <button
+                    onClick={() => setAnchor('none')}
+                    className={`p-1 rounded-md transition-all ${anchor === 'none' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                    title={anchor === 'none' ? "Center" : "Un-anchor"}
+                    aria-label={anchor === 'none' ? "Center Chat Box" : "Un-anchor Chat Box"}
+                  >
+                    <div className="w-3 h-3 border-x-2 border-current" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (anchor !== 'right') setWindowSize(prev => ({ ...prev, width: 400 }));
+                      setAnchor(anchor === 'right' ? 'none' : 'right');
+                    }}
+                    className={`p-1 rounded-md transition-all ${anchor === 'right' ? 'bg-white dark:bg-slate-700 text-brand-orange shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                    title="Anchor Right"
+                    aria-label="Anchor Right"
+                  >
+                    <div className="w-3 h-3 border-r-2 border-current" />
+                  </button>
                 </div>
-              ))}
-              <button 
-                onClick={createNewWorkspace}
-                className="p-2 text-slate-400 hover:text-brand-orange transition-colors mb-1"
-                title="New Workspace"
+              )}
+              {isDetached && anchor !== 'none' && (
+                <button
+                  onClick={() => setAnchor('none')}
+                  className="px-2 py-1 text-[8px] font-bold uppercase tracking-widest bg-brand-orange/10 text-brand-orange rounded-md border border-brand-orange/20 hover:bg-brand-orange/20 transition-all flex items-center gap-1"
+                  title="Un-anchor Chat"
+                  aria-label="Un-anchor Chat"
+                >
+                  <div className="w-2 h-2 border-x border-current" />
+                  Un-anchor
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setIsDetached(!isDetached);
+                  setAnchor('none');
+                }}
+                className={`p-1.5 rounded-lg transition-all ${
+                  isDetached 
+                    ? 'bg-brand-orange text-white shadow-lg shadow-brand-orange/20' 
+                    : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                }`}
+                title={isDetached ? "Attach Window" : "Detach Window"}
               >
-                <Plus className="w-3 h-3" />
+                <ExternalLink className="w-3 h-3" />
               </button>
             </div>
           </div>
@@ -978,7 +1103,7 @@ export default function App() {
               >
                 {chatSubView === 'chat' ? (
                   <>
-                    <div className="h-[450px] w-[800px] overflow-y-auto p-[1.95rem] pb-24 space-y-4 scrollbar-hide relative z-10">
+                    <div className={`${isDetached ? 'flex-1' : 'h-[450px] w-[800px]'} overflow-y-auto p-[1.95rem] pb-24 space-y-4 scrollbar-hide relative z-10`}>
                     {messages.map((msg) => (
                       <motion.div
                         key={msg.id}
@@ -1181,7 +1306,7 @@ export default function App() {
                       exit={{ opacity: 0, scale: 0.98 }}
                       className="p-8 bg-slate-900 rounded-[32px] border border-white/10 flex flex-col items-center justify-center space-y-6 relative overflow-hidden min-h-[300px]"
                     >
-                      <div className="absolute inset-0 bg-gradient-to-b from-brand-orange/10 to-transparent opacity-20" />
+                      <div className="absolute inset-0 bg-gradient-to-b from-brand-orange/10 to-transparent opacity-20 animate-pulse" />
                       
                       {researchMode === 'live' ? (
                         <div className="w-full h-full flex flex-col items-center space-y-4">
@@ -1202,7 +1327,10 @@ export default function App() {
                               transition={{ repeat: Infinity, duration: 2 }}
                               className="text-center"
                             >
-                              <Search className="w-8 h-8 text-brand-orange mx-auto mb-2" />
+                              <div className="relative mb-2">
+                                <Search className="w-8 h-8 text-brand-orange mx-auto" />
+                                <Loader2 className="absolute -top-1 -right-1 w-4 h-4 text-brand-orange animate-spin" />
+                              </div>
                               <p className="text-[10px] font-bold text-white uppercase tracking-widest">Secure Live Session Active</p>
                               <p className="text-[8px] text-slate-500 uppercase mt-1">Filtering traffic through {selectedProtocol} layers...</p>
                             </motion.div>
@@ -1222,12 +1350,15 @@ export default function App() {
                         <>
                           <div className="relative">
                             <motion.div 
-                              animate={{ rotate: 360 }}
-                              transition={{ repeat: Infinity, duration: 4, ease: "linear" }}
-                              className="w-16 h-16 border-2 border-brand-orange/20 border-t-brand-orange rounded-full"
+                              animate={{ rotate: 360, scale: [1, 1.05, 1] }}
+                              transition={{ 
+                                rotate: { repeat: Infinity, duration: 4, ease: "linear" },
+                                scale: { repeat: Infinity, duration: 2, ease: "easeInOut" }
+                              }}
+                              className="w-16 h-16 border-2 border-brand-orange/20 border-t-brand-orange rounded-full shadow-[0_0_30px_rgba(249,115,22,0.2)]"
                             />
                             <div className="absolute inset-0 flex items-center justify-center">
-                              <Bot className="w-6 h-6 text-brand-orange animate-pulse" />
+                              <Loader2 className="w-8 h-8 text-brand-orange animate-spin" />
                             </div>
                           </div>
                           <div className="text-center space-y-2">
@@ -1366,7 +1497,11 @@ export default function App() {
                       ].map((opt) => (
                         <button 
                           key={opt.id} 
-                          onClick={() => setPendingTask({ type: 'scan', tool: opt.label })}
+                          onClick={() => setPendingTask({ 
+                            type: 'scan', 
+                            tool: opt.label,
+                            target: localScanTarget || undefined
+                          })}
                           className="flex flex-col items-center justify-center gap-2 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5 hover:border-brand-orange/50 transition-all text-center group"
                         >
                           <div className="p-3 bg-white dark:bg-slate-700 rounded-xl shadow-sm group-hover:text-brand-orange transition-colors">
@@ -1375,6 +1510,29 @@ export default function App() {
                           <p className="text-[10px] font-bold text-slate-900 dark:text-white uppercase tracking-widest">{opt.label}</p>
                         </button>
                       ))}
+
+                      <div className="col-span-2 p-4 bg-slate-900 rounded-xl border border-white/10 mt-2">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Search className="w-3 h-3 text-brand-orange" />
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Target Specification</span>
+                        </div>
+                        <input 
+                          type="text"
+                          value={localScanTarget}
+                          onChange={(e) => setLocalScanTarget(e.target.value)}
+                          placeholder="Enter target (IP, Domain, Folder)..."
+                          className="w-full bg-transparent text-slate-200 text-xs focus:outline-none font-mono"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && localScanTarget) {
+                              setPendingTask({ 
+                                type: 'scan', 
+                                tool: 'Custom Scan', 
+                                target: localScanTarget 
+                              });
+                            }
+                          }}
+                        />
+                      </div>
                     </motion.div>
                   ) : (
                     <motion.div 
@@ -1522,48 +1680,30 @@ export default function App() {
                           <button 
                             onClick={() => {
                               const msg = `Executing ${pendingTask.type === 'scan' ? 'security scan' : 'Kali command'}: ${pendingTask.tool}. Secure search active.`;
+                              setIsScanning(true);
                               setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: `🚀 ${msg}\n\nTask initiated successfully. Monitoring neural feedback...` }]);
                               setPendingTask(null);
                               setSelectedKaliTools([]);
                               setKaliTarget('');
+                              setLocalScanTarget('');
                               setKaliManualCommand('');
                               setActiveTab('chat');
+                              
+                              // Simulate scan completion
+                              setTimeout(() => {
+                                setIsScanning(false);
+                                setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `✅ ${pendingTask.type === 'scan' ? 'Security scan' : 'Kali command'} completed. No critical vulnerabilities found in the specified target.` }]);
+                              }, 4000);
                             }}
-                            className="flex-1 py-3 bg-brand-orange text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-orange/90 transition-all shadow-lg shadow-brand-orange/20"
+                            className="flex-1 py-3 bg-brand-orange text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-brand-orange/90 transition-all shadow-lg shadow-brand-orange/20 animate-pulse"
                           >
-                            Execute Y
+                            Initiate
                           </button>
                         </div>
                       </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
-              </motion.div>
-            ) : activeTab === 'workspace' ? (
-              <motion.div 
-                key="workspace"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                className="flex-1 p-8 space-y-4 relative z-10"
-              >
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Workspace Management</h3>
-                <div className="grid gap-3">
-                  {[
-                    { label: 'Create Project Workspace', desc: 'Initialize new neural environment', icon: LayoutGrid },
-                    { label: 'Delete Workspace', desc: 'Permanent resource deallocation', icon: Bug },
-                  ].map((opt) => (
-                    <button key={opt.label} className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-white/5 hover:border-brand-orange/50 transition-all text-left group">
-                      <div className="p-2 bg-white dark:bg-slate-700 rounded-xl shadow-sm group-hover:text-brand-orange transition-colors">
-                        <opt.icon className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900 dark:text-white">{opt.label}</p>
-                        <p className="text-[10px] text-slate-400 uppercase tracking-wider">{opt.desc}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
               </motion.div>
             ) : activeTab === 'tools' ? (
               <motion.div 
@@ -1769,13 +1909,13 @@ export default function App() {
                   <div className="flex-1 flex flex-col min-h-0">
                     <div className="flex items-center gap-2 mb-3">
                       <FolderKanban className="w-3 h-3 text-brand-orange" />
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Workspace Memory ({activeWorkspace.name})</span>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Local Memory</span>
                     </div>
                     <div className="flex-1 overflow-y-auto pr-2 space-y-3 no-scrollbar">
                       {memoryItems.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-32 text-center space-y-2 opacity-30 border-2 border-dashed border-slate-200 dark:border-white/5 rounded-2xl">
                           <Database className="w-6 h-6" />
-                          <p className="text-[9px] font-bold uppercase tracking-widest">No workspace data</p>
+                          <p className="text-[9px] font-bold uppercase tracking-widest">No local data</p>
                         </div>
                       ) : (
                         memoryItems.map((item) => (
@@ -1816,7 +1956,7 @@ export default function App() {
                               setMemoryItems(prev => [item, ...prev]);
                               setGlobalMemoryItems(prev => prev.filter(i => i.id !== item.id));
                             }}
-                            moveLabel="Workspace"
+                            moveLabel="Local"
                           />
                         ))
                       )}
@@ -1827,25 +1967,88 @@ export default function App() {
             ) : null}
           </AnimatePresence>
 
+          {isDetached && (
+            <div 
+              className={`absolute z-50 flex items-center justify-center group ${
+                anchor === 'none' 
+                  ? 'bottom-0 right-0 w-6 h-6 cursor-nwse-resize' 
+                  : anchor === 'left'
+                    ? 'top-0 right-0 w-2 h-full cursor-ew-resize hover:bg-brand-orange/10 transition-colors'
+                    : 'top-0 left-0 w-2 h-full cursor-ew-resize hover:bg-brand-orange/10 transition-colors'
+              }`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startY = e.clientY;
+                const startWidth = windowSize.width;
+                const startHeight = windowSize.height;
+
+                const onMouseMove = (moveEvent: MouseEvent) => {
+                  if (anchor === 'none') {
+                    setWindowSize({
+                      width: Math.max(400, startWidth + (moveEvent.clientX - startX)),
+                      height: Math.max(400, startHeight + (moveEvent.clientY - startY)),
+                    });
+                  } else if (anchor === 'left') {
+                    setWindowSize(prev => ({
+                      ...prev,
+                      width: Math.max(300, startWidth + (moveEvent.clientX - startX)),
+                    }));
+                  } else if (anchor === 'right') {
+                    setWindowSize(prev => ({
+                      ...prev,
+                      width: Math.max(300, startWidth - (moveEvent.clientX - startX)),
+                    }));
+                  }
+                };
+
+                const onMouseUp = () => {
+                  window.removeEventListener('mousemove', onMouseMove);
+                  window.removeEventListener('mouseup', onMouseUp);
+                };
+
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+              }}
+            >
+              {anchor === 'none' ? (
+                <div className="w-1.5 h-1.5 bg-slate-300 dark:bg-slate-600 rounded-full group-hover:bg-brand-orange transition-colors" />
+              ) : (
+                <div className="w-0.5 h-12 bg-slate-300/50 dark:bg-slate-600/50 rounded-full group-hover:bg-brand-orange transition-colors" />
+              )}
+            </div>
+          )}
+
           {/* Floating Chat Bar (Higher Position) */}
           <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-[90%] z-20">
+            {isDetached && anchor !== 'none' && (
+              <div className="flex justify-center mb-2">
+                <button
+                  onClick={() => setAnchor('none')}
+                  className="px-3 py-1 text-[9px] font-bold uppercase tracking-widest bg-white/80 dark:bg-slate-800/80 backdrop-blur-md text-slate-500 dark:text-slate-400 rounded-full border border-slate-200 dark:border-white/10 hover:text-brand-orange transition-all shadow-sm"
+                  aria-label="Un-anchor Chat Box"
+                >
+                  Un-anchor Chat Box
+                </button>
+              </div>
+            )}
             <div className="relative flex items-center group">
-              <div className="absolute inset-0 bg-white/40 dark:bg-black/20 backdrop-blur-md rounded-2xl -m-1 opacity-0 group-focus-within:opacity-100 transition-opacity" />
+              <div className={`absolute inset-0 bg-white/40 dark:bg-black/20 backdrop-blur-md rounded-2xl -m-1 opacity-0 group-focus-within:opacity-100 transition-opacity ${isLoading ? 'opacity-100 bg-brand-orange/5 blur-lg animate-pulse' : ''}`} />
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="Command AnythingLLM..."
+                placeholder={isLoading ? "Neural Processing..." : "Command AnythingLLM..."}
                 disabled={isLoading}
-                className="relative w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-2xl py-4 pl-6 pr-14 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/40 focus:border-brand-orange transition-all shadow-xl dark:text-white disabled:opacity-50"
+                className={`relative w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-2xl py-4 pl-6 pr-14 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/40 focus:border-brand-orange transition-all shadow-xl dark:text-white disabled:opacity-50 ${isLoading ? 'border-brand-orange/30' : ''}`}
               />
               <button 
                 onClick={handleSend}
                 disabled={isLoading}
                 className="absolute right-2 p-3 bg-slate-900 dark:bg-brand-orange text-white rounded-xl hover:bg-slate-800 dark:hover:bg-brand-orange/80 transition-all active:scale-95 z-10 disabled:opacity-50"
               >
-                <Send className="w-4 h-4" />
+                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </button>
             </div>
           </div>
